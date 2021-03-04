@@ -1,3 +1,2 @@
 # VBA_WinsockAPI_UDP_Sample
 
-VBA_WinsockAPI_TCP_Sample
