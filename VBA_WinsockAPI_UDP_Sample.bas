@@ -11,9 +11,9 @@ Private Const FORMAT_MESSAGE_FROM_SYSTEM As Long = &H1000
 Private Const FORMAT_MESSAGE_IGNORE_INSERTS As Long = &H200
 Private Const FORMAT_MESSAGE_MAX_WIDTH_MASK As Long = &HFF
 'FormatMessage(API)
-Private Declare PtrSafe Function FormatMessage Lib "kernel32" Alias "FormatMessageA" (ByVal dwFlags As Long, lpSource As Long, _
+Private Declare PtrSafe Function FormatMessage Lib "kernel32" Alias "FormatMessageA" (ByVal dwFlags As Long, ByVal lpSource As LongPtr, _
         ByVal dwMessageId As Long, ByVal dwLanguageId As Long, _
-        ByVal lpBuffer As String, ByVal nSize As Long, Arguments As LongPtr) _
+        ByVal lpBuffer As String, ByVal nSize As Long, ByVal Arguments As LongPtr) _
         As Long
 
 '* ---  WSAStartup / WSACleanup  --- */
@@ -30,12 +30,12 @@ Public Type WSAData
     szSystemStatus As String * WSASYS_STATUS_SIZE
     iMaxSockets As Integer
     iMaxUDPDG As Integer
-    lpVendorInfo As Long
+    lpVendorInfo As LongPtr
 End Type
 
 'WSAStartup / WSACleanup(API)
 Public Declare PtrSafe Function WSAStartup Lib "Ws2_32.dll" (ByVal wVersionRequested As Integer, ByRef lpWSADATA As WSAData) As Long
-Public Declare PtrSafe Function WSACleanup Lib "wsock32.dll" () As Long
+Public Declare PtrSafe Function WSACleanup Lib "ws2_32.dll" () As Long
 
 '* ---  Network　 --- */
 Private Enum AF
@@ -76,30 +76,30 @@ Public Type SOCKADDR_IN
     sin_zero2 As Long
 End Type
 
-Private Const INVALID_SOCKET = -1
+Private Const INVALID_SOCKET As Long = -1
 Private Const SOCKET_ERROR As Long = -1
+Private Const DEFAULT_SERVER_IP As String = "127.0.0.1"
+Private Const DEFAULT_SERVER_PORT As Long = 60051
+Private Const RECEIVE_BUFFER_SIZE As Long = 2048
 
 
 'socket / closesocket(API)
-Public Declare PtrSafe Function SOCKET Lib "wsock32.dll" Alias "socket" (ByVal lngAf As LongPtr, ByVal lngType As LongPtr, ByVal lngProtocol As LongPtr) As Long
-Public Declare PtrSafe Function closesocket Lib "Ws2_32.dll" (ByVal socketHandle As Long) As Long
+Public Declare PtrSafe Function SOCKET Lib "ws2_32.dll" Alias "socket" (ByVal lngAf As Long, ByVal lngType As Long, ByVal lngProtocol As Long) As LongPtr
+Public Declare PtrSafe Function closesocket Lib "ws2_32.dll" (ByVal socketHandle As LongPtr) As Long
 'sendto(API)
-Private Declare PtrSafe Function sendto Lib "Ws2_32.dll" (ByVal s As Long, ByVal buf As String, ByVal length As Long, ByVal Flags As Long, ByRef remoteAddr As SOCKADDR_IN, ByVal remoteAddrSize As Long) As Long
+Private Declare PtrSafe Function sendto Lib "ws2_32.dll" (ByVal s As LongPtr, ByVal buf As String, ByVal length As Long, ByVal Flags As Long, ByRef remoteAddr As SOCKADDR_IN, ByVal remoteAddrSize As Long) As Long
 'recvfrom(API)
-Public Declare PtrSafe Function recvfrom Lib "wsock32.dll" (ByVal SOCKET As LongPtr, ByVal buf As String, ByVal length As LongPtr, ByVal Flags As Long, FromAddr As SOCKADDR_IN, fromAddrSize As Long) As Long
+Public Declare PtrSafe Function recvfrom Lib "ws2_32.dll" (ByVal socketHandle As LongPtr, ByVal buf As String, ByVal length As Long, ByVal Flags As Long, ByRef FromAddr As SOCKADDR_IN, ByRef fromAddrSize As Long) As Long
 'bind(API)
-Private Declare PtrSafe Function bind Lib "Ws2_32.dll" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByVal namelen As Long) As Long
+Private Declare PtrSafe Function bind Lib "ws2_32.dll" (ByVal s As LongPtr, ByRef Name As SOCKADDR_IN, ByVal namelen As Long) As Long
 'htons(API)
-Private Declare PtrSafe Function htons Lib "Ws2_32.dll" (ByVal hostshort As Long) As Integer
-Private Declare PtrSafe Function ntohs Lib "Ws2_32.dll" (ByVal netshort As Long) As Integer
+Private Declare PtrSafe Function htons Lib "ws2_32.dll" (ByVal hostshort As Integer) As Integer
+Private Declare PtrSafe Function ntohs Lib "ws2_32.dll" (ByVal netshort As Integer) As Integer
 
 ' inet_addr(API) IPをドット形式(x.x.x.x)から内部形式に変更
 Private Declare PtrSafe Function inet_addr Lib "Ws2_32.dll" (ByVal cp As String) As Long
 'IPv4またはIPv6インターネットネットワークアドレスからインターネット標準形式の文字列に変換
-Private Declare PtrSafe Function InetNtopW Lib "Ws2_32.dll" (ByVal Family As Integer, ByRef pAddr As Long, ByVal pStringBuf As String, ByVal StringBufSize As Integer) As Long
-
-'* ---  Sleep --- */
-Private Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+Private Declare PtrSafe Function InetNtopW Lib "ws2_32.dll" (ByVal Family As Integer, ByRef pAddr As Long, ByVal pStringBuf As String, ByVal StringBufSize As LongPtr) As LongPtr
 
 'エラーコードをFormatMessageで可読可能に変換
 Public Function GetFormatMessageString(Optional ByVal dwMessageId As Long = 0) As String
@@ -116,7 +116,7 @@ Public Function GetFormatMessageString(Optional ByVal dwMessageId As Long = 0) A
     lpBuffer = String(1024, vbNullChar)
     result = FormatMessage(dwFlags, 0&, dwMessageId, 0&, lpBuffer, Len(lpBuffer), 0&)
     If (result > 0) Then
-        lpBuffer = Left(lpBuffer, InStr(lpBuffer, vbNullChar) - 1) 'Null終端まで取得
+        lpBuffer = Left$(lpBuffer, result)
     Else
         lpBuffer = ""
     End If
@@ -130,16 +130,15 @@ Public Function MAKEWORD(Lo As Byte, Hi As Byte) As Integer
 End Function
 
 Public Sub UDPRecvFrom()
-    Dim ip As String: ip = "127.0.0.1"
-    Dim remotePort As Long: remotePort = 60051
-
     Dim RetCode As Long
-    
+    Dim WinsockStarted As Boolean
     Dim remoteAddr As SOCKADDR_IN
-    Dim ListenSocketHandle As Long
-    Const RecvBuffSize As Long = 2048
-    Dim recvBuffer As String * RecvBuffSize
+    Dim remoteAddrSize As Long
+    Dim ListenSocketHandle As LongPtr
+    Dim recvBuffer As String * RECEIVE_BUFFER_SIZE
     Dim recvResult As Long
+
+    ListenSocketHandle = INVALID_SOCKET
 
     Dim WSAD As WSAData
     RetCode = WSAStartup(MAKEWORD(2, 2), WSAD)
@@ -147,6 +146,7 @@ Public Sub UDPRecvFrom()
         MsgBox "WSAStartup failed with error：" & GetFormatMessageString(RetCode)
         Exit Sub
     End If
+    WinsockStarted = True
     
     ListenSocketHandle = SOCKET(AF.AF_INET, SOCKTYPE.SOCK_DGRAM, PROTOCOL.IPPROTO_UDP)
     If ListenSocketHandle = INVALID_SOCKET Then
@@ -155,8 +155,8 @@ Public Sub UDPRecvFrom()
     End If
     
     remoteAddr.sin_family = AF_INET
-    remoteAddr.sin_addr = inet_addr(ip)
-    remoteAddr.sin_port = htons(remotePort)
+    remoteAddr.sin_addr = inet_addr(DEFAULT_SERVER_IP)
+    remoteAddr.sin_port = htons(Convert_u_short_PortNumber(DEFAULT_SERVER_PORT))
         
     RetCode = bind(ListenSocketHandle, remoteAddr, LenB(remoteAddr))
     If RetCode = SOCKET_ERROR Then
@@ -166,13 +166,13 @@ Public Sub UDPRecvFrom()
                           
     Do While True
         DoEvents
-'        Sleep 200
-        recvBuffer = String(RecvBuffSize, vbNullChar)
-        recvResult = recvfrom(ListenSocketHandle, recvBuffer, RecvBuffSize, 0, remoteAddr, LenB(remoteAddr))
+        recvBuffer = String(RECEIVE_BUFFER_SIZE, vbNullChar)
+        remoteAddrSize = LenB(remoteAddr)
+        recvResult = recvfrom(ListenSocketHandle, recvBuffer, RECEIVE_BUFFER_SIZE, 0, remoteAddr, remoteAddrSize)
         If (recvResult > 0) Then
             
             Dim ipBuffer As String
-            ipBuffer = Left(recvBuffer, InStr(recvBuffer, vbNullChar) - 1) 'Null終端まで取得
+            ipBuffer = Left$(recvBuffer, recvResult)
             'ちょっと改造ここで電文制御
             '仕様：
             'HELLO -> HELLO VBA Winsock API と答える。
@@ -197,16 +197,14 @@ Public Sub UDPRecvFrom()
     Loop
     
 EXIT_POINT:
-     If closesocket(ListenSocketHandle) = SOCKET_ERROR Then
-        MsgBox "closesocket failed with error：" & GetFormatMessageString(Err.LastDllError)
-     End If
-     If WSACleanup() <> 0 Then
+    If ListenSocketHandle <> INVALID_SOCKET Then
+        If closesocket(ListenSocketHandle) = SOCKET_ERROR Then
+            MsgBox "closesocket failed with error：" & GetFormatMessageString(Err.LastDllError)
+        End If
+    End If
+    If WinsockStarted And WSACleanup() <> 0 Then
         MsgBox "Windows Sockets error occurred in Cleanup.", vbExclamation
-     End If
-
-    'ここで自分自身を閉じる。
-    ThisWorkbook.Close
-    Application.Quit
+    End If
 
 End Sub
 
@@ -216,12 +214,13 @@ Public Sub UDPSendTo(ByRef Msg As String)
 
     Dim RetCode As Long
     Dim WSAData As WSAData
-    Dim SendSocketHandle As Long
+    Dim SendSocketHandle As LongPtr
     Dim DstAddr As SOCKADDR_IN
+    Dim WinsockStarted As Boolean
+
+    SendSocketHandle = INVALID_SOCKET
     
     'パラメータ
-    Dim ip As String: ip = "127.0.0.1"
-    Dim TargetPort As Long: TargetPort = 60051
     Dim strbuffer As String
     strbuffer = Msg
    
@@ -231,6 +230,7 @@ Public Sub UDPSendTo(ByRef Msg As String)
         MsgBox "WSAStartup failed with error：" & GetFormatMessageString(RetCode)
         Exit Sub
     End If
+    WinsockStarted = True
 
     'UDP socket
     SendSocketHandle = SOCKET(AF.AF_INET, SOCKTYPE.SOCK_DGRAM, PROTOCOL.IPPROTO_UDP)
@@ -240,8 +240,8 @@ Public Sub UDPSendTo(ByRef Msg As String)
     End If
 
     DstAddr.sin_family = AF.AF_INET
-    DstAddr.sin_addr = inet_addr(ip)
-    DstAddr.sin_port = htons(Convert_u_short_PortNumber(TargetPort))
+    DstAddr.sin_addr = inet_addr(DEFAULT_SERVER_IP)
+    DstAddr.sin_port = htons(Convert_u_short_PortNumber(DEFAULT_SERVER_PORT))
      
     'sendto 送信
     RetCode = sendto(SendSocketHandle, strbuffer, Len(strbuffer), 0, DstAddr, Len(DstAddr))
@@ -253,12 +253,14 @@ Public Sub UDPSendTo(ByRef Msg As String)
     End If
 
 EXIT_POINT:
-     If closesocket(SendSocketHandle) = SOCKET_ERROR Then
-        MsgBox "closesocket failed with error：" & GetFormatMessageString(Err.LastDllError)
-     End If
-     If WSACleanup() <> 0 Then
+    If SendSocketHandle <> INVALID_SOCKET Then
+        If closesocket(SendSocketHandle) = SOCKET_ERROR Then
+            MsgBox "closesocket failed with error：" & GetFormatMessageString(Err.LastDllError)
+        End If
+    End If
+    If WinsockStarted And WSACleanup() <> 0 Then
         MsgBox "Windows Sockets error occurred in Cleanup.", vbExclamation
-     End If
+    End If
 End Sub
 
 Function PrintIPAndPortNumber(ByRef Addr As SOCKADDR_IN) As String
